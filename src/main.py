@@ -1,36 +1,28 @@
 import os
-import sys
-import logging
-import multiprocessing as mp
-from typing import List, Tuple
+import json
+import subprocess
 
-from dgo.core.agent import Agent
-from dgo.core.swarm import Swarm
-from dgo.core.governance import GovernanceProtocol
-from dgo.utils.config import load_config
-from dgo.utils.network import discover_agents, connect_agents
+class GovernanceOrchestrator:
+    def __init__(self, config_path):
+        self.config_path = config_path
+        self.load_config()
 
-def main():
-    """Main entry point for the Decentralized Governance Orchestrator (DGO)."""
-    # Load configuration
-    config = load_config("config.yaml")
+    def load_config(self):
+        with open(self.config_path, 'r') as f:
+            self.config = json.load(f)
 
-    # Initialize logging
-    logging.basicConfig(level=config["logging_level"])
+    def execute_governance_action(self, action_name, params):
+        action = self.config['actions'].get(action_name)
+        if not action:
+            raise ValueError(f'Action {action_name} not found in config')
 
-    # Discover and connect agents
-    agents = discover_agents(config["agent_discovery_endpoints"])
-    connect_agents(agents)
+        command = action['command'].format(**params)
+        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode != 0:
+            raise RuntimeError(f'Error executing action {action_name}: {result.stderr.decode().strip()}')
 
-    # Create governance protocol
-    protocol = GovernanceProtocol(
-        agents=agents,
-        consensus_mechanism=config["consensus_mechanism"],
-        decision_making_process=config["decision_making_process"]
-    )
+        return result.stdout.decode().strip()
 
-    # Execute governance processes
-    protocol.run()
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    orchestrator = GovernanceOrchestrator('config.json')
+    print(orchestrator.execute_governance_action('create_proposal', {'title': 'Increase funding for community initiatives', 'description': 'Allocate an additional $50,000 to support local community projects.', 'voting_duration': '2 weeks'}))
