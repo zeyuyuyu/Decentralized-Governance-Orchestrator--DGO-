@@ -1,76 +1,85 @@
+from dataclasses import dataclass
 from typing import Dict, List, Optional
-from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta
 
-class VotingThreshold:
-    def __init__(self, min_quorum: Decimal, scaling_factor: Decimal = Decimal('0.5')):
-        self.min_quorum = min_quorum
-        self.scaling_factor = scaling_factor
-
-    def calculate_required_quorum(self, total_stake: Decimal, proposal_impact: Decimal) -> Decimal:
-        """Calculate required quorum based on proposal impact and total stake"""
-        return min(
-            self.min_quorum + (proposal_impact * self.scaling_factor),
-            Decimal('1.0')
-        )
+@dataclass
+class Member:
+    address: str
+    join_date: datetime
+    reputation_score: float
+    voting_history: List[str]
 
 class GovernanceRules:
     def __init__(self):
-        self.voting_thresholds = VotingThreshold(min_quorum=Decimal('0.2'))
-        self.proposal_categories = {
-            'CRITICAL': Decimal('0.8'),
-            'HIGH': Decimal('0.6'),
-            'MEDIUM': Decimal('0.4'),
-            'LOW': Decimal('0.2')
-        }
-        self.voting_period_days = 7
-
-    def validate_proposal(self, proposal: Dict) -> bool:
-        """Validate if a proposal meets basic governance rules"""
-        required_fields = ['title', 'description', 'category', 'start_time']
-        return all(field in proposal for field in required_fields)
-
-    def calculate_vote_result(self,
-                            votes: List[Dict],
-                            total_stake: Decimal,
-                            proposal_category: str) -> Dict:
-        """Calculate voting results with dynamic thresholds"""
-        if not votes:
-            return {'passed': False, 'reason': 'No votes cast'}
-
-        positive_votes = sum(Decimal(v['stake']) for v in votes if v['vote'] == 'YES')
-        total_votes = sum(Decimal(v['stake']) for v in votes)
-
-        impact_level = self.proposal_categories.get(proposal_category, Decimal('0.4'))
-        required_quorum = self.voting_thresholds.calculate_required_quorum(
-            total_stake,
-            impact_level
+        self.members: Dict[str, Member] = {}
+        self.min_reputation_for_proposal = 100
+        self.base_voting_weight = 1.0
+        self.max_voting_weight = 10.0
+        
+    def calculate_voting_weight(self, member_address: str) -> float:
+        """Calculate a member's voting weight based on reputation and tenure"""
+        member = self.members.get(member_address)
+        if not member:
+            return 0.0
+            
+        # Base components for weight calculation
+        tenure_weight = self._calculate_tenure_weight(member.join_date)
+        reputation_weight = self._calculate_reputation_weight(member.reputation_score)
+        participation_weight = self._calculate_participation_weight(member.voting_history)
+        
+        # Combine weights with dampening
+        total_weight = (
+            self.base_voting_weight *
+            (tenure_weight * 0.3 +
+             reputation_weight * 0.5 +
+             participation_weight * 0.2)
         )
-
-        participation_rate = total_votes / total_stake
-        approval_rate = positive_votes / total_votes if total_votes > 0 else Decimal('0')
-
-        result = {
-            'passed': False,
-            'participation_rate': float(participation_rate),
-            'approval_rate': float(approval_rate),
-            'required_quorum': float(required_quorum)
-        }
-
-        if participation_rate >= required_quorum and approval_rate >= Decimal('0.5'):
-            result['passed'] = True
-
-        return result
-
-    def is_voting_active(self, proposal_start_time: datetime) -> bool:
-        """Check if voting period is still active"""
-        elapsed_days = (datetime.now() - proposal_start_time).days
-        return elapsed_days <= self.voting_period_days
-
-    def get_proposal_requirements(self, category: str) -> Dict:
-        """Get specific requirements for a proposal category"""
-        return {
-            'impact_level': float(self.proposal_categories.get(category, Decimal('0.4'))),
-            'voting_period_days': self.voting_period_days,
-            'min_quorum': float(self.voting_thresholds.min_quorum)
-        }
+        
+        return min(total_weight, self.max_voting_weight)
+    
+    def _calculate_tenure_weight(self, join_date: datetime) -> float:
+        """Calculate weight modifier based on member tenure"""
+        days_active = (datetime.now() - join_date).days
+        return min(days_active / 365, 1.0)  # Max tenure weight after 1 year
+    
+    def _calculate_reputation_weight(self, reputation: float) -> float:
+        """Calculate weight modifier based on reputation score"""
+        return min(reputation / 1000, 1.0)  # Normalize to max 1.0
+    
+    def _calculate_participation_weight(self, voting_history: List[str]) -> float:
+        """Calculate weight modifier based on governance participation"""
+        if not voting_history:
+            return 0.0
+        
+        recent_votes = len([vote for vote in voting_history 
+                          if self._is_recent(vote)])
+        return min(recent_votes / 10, 1.0)  # Max weight after 10 recent votes
+    
+    def _is_recent(self, vote_id: str) -> bool:
+        """Check if a vote occurred within the last 30 days"""
+        try:
+            vote_date = datetime.fromisoformat(vote_id.split('-')[0])
+            return (datetime.now() - vote_date) <= timedelta(days=30)
+        except:
+            return False
+    
+    def can_create_proposal(self, member_address: str) -> bool:
+        """Check if a member has sufficient reputation to create proposals"""
+        member = self.members.get(member_address)
+        return member and member.reputation_score >= self.min_reputation_for_proposal
+    
+    def register_member(self, address: str) -> None:
+        """Register a new member with initial values"""
+        if address not in self.members:
+            self.members[address] = Member(
+                address=address,
+                join_date=datetime.now(),
+                reputation_score=0.0,
+                voting_history=[]
+            )
+    
+    def record_vote(self, member_address: str, proposal_id: str) -> None:
+        """Record a member's vote participation"""
+        if member_address in self.members:
+            vote_id = f"{datetime.now().isoformat()}-{proposal_id}"
+            self.members[member_address].voting_history.append(vote_id)
